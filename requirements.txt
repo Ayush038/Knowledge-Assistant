@@ -1,0 +1,14 @@
+flask
+flask-cors
+flask-jwt-extended
+python-dotenv
+
+pymongo
+requests
+
+pinecone-client
+groq
+ollama
+
+pdfplumber
+cloudinary
