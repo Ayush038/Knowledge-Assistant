@@ -19,6 +19,8 @@ from llm.generator import generate_answer
 from chat.chat_session_model import create_chat_session
 from chat.message_model import create_message
 from chat.utils import get_recent_messages, format_chat_history
+from documents.usage_log_model import create_llm_usage_log
+import re
 
 
 document_bp = Blueprint("documents", __name__)
@@ -32,6 +34,25 @@ documents_collection = db["documents"]
 chunks_collection = db["document_chunks"]
 chat_sessions = db["chat_sessions"]
 messages = db["messages"]
+llm_usage_logs = db["llm_usage_logs"]
+user_usage = db["user_usage"]
+
+
+SMALL_TALK_PATTERNS = [
+    r"^hi$",
+    r"^hello$",
+    r"^hey$",
+    r"^how are you\??$",
+    r"^thanks?$",
+    r"^thank you$",
+    r"^ok$",
+    r"^okay$",
+    r"^cool$"
+]
+
+def is_small_talk(query: str) -> bool:
+    q = query.strip().lower()
+    return any(re.match(p, q) for p in SMALL_TALK_PATTERNS)
 
 
 def allowed_file(filename):
@@ -146,7 +167,16 @@ def search_query():
     query = data["query"]
     top_k = data.get("top_k", 5)
 
-    results = retrieve_chunks(query, top_k=top_k)
+    claims = get_jwt()
+    role = claims.get("role")
+    user_id = get_jwt_identity()
+
+    results = retrieve_chunks(
+        query,
+        top_k=top_k,
+        user_id=user_id,
+        is_admin=(role == "admin")
+    )
 
     return jsonify({"success": True, "results": results}), 200
 
@@ -169,6 +199,25 @@ def ask_question():
         result = chat_sessions.insert_one(session)
         session_id = str(result.inserted_id)
 
+    if is_small_talk(query):
+        answer = "Hi there. Ask me something based on your uploaded documents and I’ll help."
+
+        messages.insert_one(
+            create_message(
+                session_id=session_id,
+                user_id=user_id,
+                role="assistant",
+                content=answer,
+                sources=[]
+            )
+        )
+
+        return jsonify({
+            "success": True,
+            "session_id": session_id,
+            "answer": answer,
+            "sources": []
+        }), 200
     messages.insert_one(
         create_message(
             session_id=session_id,
@@ -177,7 +226,6 @@ def ask_question():
             content=query
         )
     )
-
     chat_history = ""
     recent_messages = get_recent_messages(
         messages_collection=messages,
@@ -186,13 +234,60 @@ def ask_question():
     )
     chat_history = format_chat_history(recent_messages)
 
-    retrieved_chunks = retrieve_chunks(query, top_k=top_k)
+    claims = get_jwt()
+    role = claims.get("role")
+
+    retrieved_chunks = retrieve_chunks(
+        query,
+        top_k=top_k,
+        user_id=user_id,
+        is_admin=(role == "admin")
+    )
 
     answer_payload = generate_answer(
         query=query,
         retrieved_chunks=retrieved_chunks,
         chat_history=chat_history
     )
+
+    usage = answer_payload.get("usage")
+
+    if usage:
+        INPUT_TOKEN_PRICE = 0.0001 / 1000
+        OUTPUT_TOKEN_PRICE = 0.0002 / 1000
+
+        cost = (
+            usage["input_tokens"] * INPUT_TOKEN_PRICE +
+            usage["output_tokens"] * OUTPUT_TOKEN_PRICE
+        )
+        log = create_llm_usage_log(
+            user_id=user_id,
+            session_id=session_id,
+            model=usage["model"],
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            total_tokens=usage["total_tokens"],
+            cost=cost
+        )
+
+        try:
+            llm_usage_logs.insert_one(log)
+
+            user_usage.update_one(
+                {"user_id": ObjectId(user_id)},
+                {
+                    "$inc": {
+                        "total_tokens": usage["total_tokens"],
+                        "total_cost": round(cost, 6)
+                    },
+                    "$set": {
+                        "last_used": datetime.utcnow()
+                    }
+                },
+                upsert=True
+            )
+        except Exception as e:
+            print("LLM usage logging failed:", e)
 
     messages.insert_one(
         create_message(

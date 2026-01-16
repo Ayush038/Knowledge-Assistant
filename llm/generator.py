@@ -23,6 +23,7 @@ def generate_answer(query, retrieved_chunks, chat_history=""):
     # Build controlled context
     context_parts = []
     total_chars = 0
+    
 
     for c in retrieved_chunks:
         trimmed = _trim_text(c["text"], MAX_CHARS_PER_CHUNK)
@@ -66,6 +67,7 @@ def generate_answer(query, retrieved_chunks, chat_history=""):
         temperature=0.2,
         max_tokens=MAX_TOKENS_TO_GENERATE,
     )
+    usage = response.usage
 
     print("LLM inference time:", round(time.time() - start, 2), "seconds")
 
@@ -77,5 +79,11 @@ def generate_answer(query, retrieved_chunks, chat_history=""):
                 "chunk_index": c["chunk_index"]
             }
             for c in retrieved_chunks
-        ]
+        ],
+        "usage": {
+            "input_tokens": usage.prompt_tokens,
+            "output_tokens": usage.completion_tokens,
+            "total_tokens": usage.total_tokens,
+            "model": "llama-3.1-8b-instant"
+        }
     }
