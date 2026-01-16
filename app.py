@@ -12,6 +12,8 @@ from embeddings.ingest_chunks import ingest_chunks
 import os
 from chat.routes import chat_bp
 from admin.routes import admin_bp
+load_dotenv()
+import os
 
 
 def embedding_worker():
@@ -52,4 +54,5 @@ def health_check():
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
