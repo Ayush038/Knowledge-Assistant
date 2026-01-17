@@ -1,18 +1,15 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from pymongo import MongoClient
-from bson import ObjectId
-import os
-from dotenv import load_dotenv
-load_dotenv()
-from chat.chat_session_model import create_chat_session
+from db import db
+from logger import get_logger
+from services.chat.session_service import create_new_chat_session
+from services.chat.history_service import fetch_chat_history
+from services.chat.list_service import list_user_sessions
 
-
+logger = get_logger(__name__)
 
 chat_bp = Blueprint("chat", __name__)
 
-client = MongoClient(os.getenv("MONGO_URI"))
-db = client["KnowledgeAssistant"]
 chat_sessions = db["chat_sessions"]
 
 
@@ -24,16 +21,17 @@ def create_session():
 
     title = data.get("title")
 
-    session = create_chat_session(
-        user_id=user_id,
-        title=title
-    )
+    result = create_new_chat_session(user_id=user_id, title=title)
 
-    result = chat_sessions.insert_one(session)
+    if not result:
+        return jsonify({
+            "success": False,
+            "msg": "Cannot create new chat until a message is sent in the last chat"
+        }), 400
 
     return jsonify({
         "success": True,
-        "session_id": str(result.inserted_id)
+        **result
     }), 201
 
 
@@ -42,35 +40,17 @@ def create_session():
 def get_chat_history(session_id):
     user_id = get_jwt_identity()
 
-    session = chat_sessions.find_one({
-        "_id": ObjectId(session_id),
-        "user_id": ObjectId(user_id)
-    })
+    try:
+        result = fetch_chat_history(user_id=user_id, session_id=session_id)
+    except Exception:
+        logger.exception("Failed to fetch chat history")
+        return jsonify({"success": False, "msg": "Failed to fetch history"}), 500
 
-    if not session:
-        return jsonify({
-            "success": False,
-            "msg": "Chat session not found"
-        }), 404
+    if not result:
+        return jsonify({"success": False, "msg": "Chat session not found"}), 404
 
-    messages_collection = db["messages"]
+    return jsonify({"success": True, **result}), 200
 
-    msgs = list(
-        messages_collection.find(
-            {"session_id": ObjectId(session_id)},
-            {"_id": 0}
-        ).sort("created_at", 1)
-    )
-
-    for msg in msgs:
-        msg["session_id"] = str(msg["session_id"])
-        msg["user_id"] = str(msg["user_id"])
-
-    return jsonify({
-        "success": True,
-        "session_id": session_id,
-        "messages": msgs
-    }), 200
 
 
 @chat_bp.route("/sessions", methods=["GET"])
@@ -78,18 +58,10 @@ def get_chat_history(session_id):
 def list_chat_sessions():
     user_id = get_jwt_identity()
 
-    sessions = list(
-        chat_sessions.find(
-            {"user_id": ObjectId(user_id)},
-            {"_id": 1, "title": 1, "created_at": 1, "updated_at": 1}
-        ).sort("updated_at", -1)
-    )
+    try:
+        result = list_user_sessions(user_id)
+    except Exception:
+        logger.exception("Failed to fetch chat sessions")
+        return jsonify({"success": False, "msg": "Failed to fetch sessions"}), 500
 
-    for s in sessions:
-        s["session_id"] = str(s["_id"])
-        del s["_id"]
-
-    return jsonify({
-        "success": True,
-        "sessions": sessions
-    }), 200
+    return jsonify({"success": True, **result}), 200
