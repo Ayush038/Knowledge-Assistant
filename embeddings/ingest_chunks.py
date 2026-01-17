@@ -1,22 +1,44 @@
 from embeddings.embedder import embed_text
 from embeddings.pinecone_client import index
-from pymongo import MongoClient
-import os
-from dotenv import load_dotenv
-load_dotenv()
+from db import db
 
-client = MongoClient(os.getenv("MONGO_URI"))
-db = client["KnowledgeAssistant"]
 chunks_collection = db["document_chunks"]
+
+
+def build_context(chunk):
+    prev_chunk = chunks_collection.find_one({
+        "document_id": chunk["document_id"],
+        "chunk_index": chunk["chunk_index"] - 1
+    })
+
+    next_chunk = chunks_collection.find_one({
+        "document_id": chunk["document_id"],
+        "chunk_index": chunk["chunk_index"] + 1
+    })
+
+    parts = []
+
+    if prev_chunk:
+        parts.append(prev_chunk["text"])
+
+    parts.append(chunk["text"])
+
+    if next_chunk:
+        parts.append(next_chunk["text"])
+
+    return "\n".join(parts)
+
 
 def ingest_chunks():
     chunks = chunks_collection.find({"embedded": False})
 
     vectors = []
-    pending_updates= []
+    pending_updates = []
 
     for chunk in chunks:
-        vector = embed_text(chunk["text"])
+        context_text = build_context(chunk)
+
+        vector = embed_text(context_text)
 
         vectors.append({
             "id": str(chunk["_id"]),
@@ -26,7 +48,9 @@ def ingest_chunks():
                 "chunk_index": chunk["chunk_index"]
             }
         })
+
         pending_updates.append(chunk["_id"])
+
         if len(vectors) >= 50:
             index.upsert(vectors=vectors)
 
@@ -36,10 +60,11 @@ def ingest_chunks():
             )
 
             vectors = []
-            pending_updates= []
+            pending_updates = []
 
     if vectors:
         index.upsert(vectors=vectors)
+
         chunks_collection.update_many(
             {"_id": {"$in": pending_updates}},
             {"$set": {"embedded": True}}
