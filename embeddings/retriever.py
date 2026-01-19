@@ -1,14 +1,9 @@
 from embeddings.embedder import embed_text
 from embeddings.pinecone_client import index
-from pymongo import MongoClient
 from bson import ObjectId
-import os
-from dotenv import load_dotenv
+from db import db
 
-load_dotenv()
 
-client = MongoClient(os.getenv("MONGO_URI"))
-db = client["KnowledgeAssistant"]
 chunks_collection = db["document_chunks"]
 
 
@@ -33,7 +28,7 @@ def retrieve_chunks(query: str, top_k: int = 2, user_id=None, is_admin=False):
     # 🔴 FIX IS HERE
     if not is_admin and user_id:
         allowed_doc_ids = db["documents"].find(
-            {"uploaded_by": user_id},   # ← NO ObjectId()
+            {"uploaded_by": ObjectId(user_id)},
             {"_id": 1}
         ).distinct("_id")
 
@@ -63,6 +58,8 @@ def retrieve_chunks(query: str, top_k: int = 2, user_id=None, is_admin=False):
     ordered_results = []
 
     for match in matches:
+        if match["score"] < 0.2:
+            continue
         chunk = chunk_map.get(match["id"])
         if not chunk:
             continue
@@ -77,5 +74,7 @@ def retrieve_chunks(query: str, top_k: int = 2, user_id=None, is_admin=False):
             ),
             "chunk_index": chunk["chunk_index"]
         })
+    
+    ordered_results.sort(key=lambda x: x["score"], reverse=True)
 
     return ordered_results

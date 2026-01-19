@@ -1,11 +1,14 @@
 import os
 import time
 from groq import Groq
+from logger import get_logger
+logger = get_logger(__name__)
+
 
 client = Groq(api_key=os.getenv("LLM_API"))
 
 MAX_CHARS_PER_CHUNK = 1000
-MAX_TOTAL_CONTEXT_CHARS = 2000
+MAX_TOTAL_CONTEXT_CHARS = 5000
 MAX_TOKENS_TO_GENERATE = 256
 
 
@@ -69,7 +72,7 @@ def generate_answer(query, retrieved_chunks, chat_history=""):
     )
     usage = response.usage
 
-    print("LLM inference time:", round(time.time() - start, 2), "seconds")
+    logger.info("LLM inference time: %.2f seconds", time.time() - start)
 
     return {
         "answer": response.choices[0].message.content.strip(),
