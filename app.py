@@ -43,7 +43,13 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    CORS(app)
+    CORS(
+        app,
+        resources={r"/*": {"origins": [
+            "http://116.202.210.102:3500"
+        ]}},
+        supports_credentials=True
+    )
     JWTManager(app)
     limiter.init_app(app)
 
